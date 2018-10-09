@@ -1,0 +1,7 @@
+#paper/Small/1.txt,71.33
+paper/Small/26.txt,147.89
+paper/Small/27.txt,86.16
+paper/Small/28.txt,119.54
+paper/Small/30.txt,106.39
+paper/Small/31.txt,173.59
+paper/Small/32.txt,20279.16
