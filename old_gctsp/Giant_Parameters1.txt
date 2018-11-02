@@ -1,0 +1,5 @@
+PROBLEM_FILE = lala.tsp
+TRACE_LEVEL = 0
+GAIN23 = NO
+RUNS = 1
+OUTPUT_TOUR_FILE Giant_Tour1.txt

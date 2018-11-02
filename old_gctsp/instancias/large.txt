@@ -1,0 +1,14 @@
+paper/Large/1L.txt,260.92
+paper/Large/2L.txt,568.82
+paper/Large/3L.txt,219.01
+paper/Large/4L.txt,521.62
+paper/Large/5L.txt,174.33
+paper/Large/6L.txt,409.69
+paper/Large/7L.txt,9659.42
+paper/Large/8L.txt,7410.18
+paper/Large/9L.txt,3359436.27
+paper/Large/10L.txt,5797974.84
+paper/Large/11L.txt,2698974.3
+paper/Large/12L.txt,4788332.03
+paper/Large/13L.txt,2399977.7
+paper/Large/14L.txt,4338690.35

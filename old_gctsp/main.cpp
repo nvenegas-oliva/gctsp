@@ -1,0 +1,656 @@
+/* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2; -*- */
+/*
+ * main.cpp
+ * This file is part of VCP-PGB
+ *
+ * Copyright (C) 2012 - Carlos Contreras Bolton <ccontreras.bolton@gmail.com>
+ *
+ * VCP-PGB is free software; you can redistribute it and/or modify it under
+ * the terms of the GNU Lesser General Public License as published by the
+ * Free Software Foundation; either version 2.1 of the License, or (at your
+ * option) any later version.
+ *
+ * VCP-PGB is distributed in the hope that it will be useful, but WITHOUT ANY
+ * WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS
+ * FOR A PARTICULAR PURPOSE.  See the GNU Lesser General Public License for
+ * more details.
+ *
+ * You should have received a copy of the GNU Lesser General Public License
+ * along with VCP-PGB; if not, write to the Free Software Foundation, Inc.,
+ * 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
+ */
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <math.h>
+#include <string>
+#include <time.h>
+#include <omp.h>
+#include <sstream>
+#include "genetic.hpp"
+
+int popsize; /* tamaño de la poblacion */
+float pcross; /* probability of crossover */
+float pmutation; /* probability of mutation */
+int maxgen; /* maximum generation number */
+string nom_arch; /* nombre del archivo de entrada con las instancias a resolver */
+string ruta_instancias2; /* Ruta completa del directorio donde estan los archivos instancias */
+unsigned randomseed; /* valor de la semilla */
+int nThread; /* Número de hebras */
+vector< pair<string, double> > nombresInstancias;
+
+
+// ############################################ VARIABLE P
+int P;
+// ############################################ VARIABLE P
+
+/**
+ *
+ * Funcion que imprime un mensaje con el la ejecucion correcta de la aplicacion
+ *
+ **/
+void usage( )
+{
+    printf( "AG-GCTSP: ./gctsp int.txt\n" );
+    exit( 0 );
+}
+
+/**
+ * Funcion que chequea la consistencia del archivo de parametros de entrada
+ *
+ **/
+bool consistenciaArchivo( char *archivo )
+{
+    /*  time_t tiempo;
+        struct tm *tlocal;
+        char date[128];
+
+
+        tiempo = time(0);
+        tlocal = localtime(&tiempo);
+        strftime(date, 128, "%d_%m_%y_%H_%M_%S", tlocal);
+     */
+    ifstream in( archivo );
+    do {
+        in >> nom_arch;
+        in >> popsize;
+        in >> maxgen;
+        in >> pcross;
+        in >> pmutation;
+        in >> nThread;
+        in >> randomseed;
+    } while ( nom_arch.find( "#" ) != std::string::npos );
+
+    if ( ( popsize <= 0 ) || ( ( popsize % 2 ) == 1 ) ) {
+        printf( "\nTamaño de la Población esta mal, debe ser par\n" );
+        return false;
+    }
+
+    if ( maxgen < 0 ) {
+        printf( "\nNúmero máximo de generaciones es menor a 0\n" );
+        return false;
+    }
+
+    if ( ( pcross < 0.0 ) || ( pcross > 1.0 ) ) {
+        printf( "\nProbabilidad cruzamiento no esta entre 0 y 1\n" );
+        return false;
+    }
+
+    if ( ( pmutation < 0.0 ) || ( pmutation > 1.0 ) ) {
+        printf( "\nProbabilidad mutación no esta entre 0 y 1\n" );
+        return false;
+    }
+
+    if ( nThread < 1 ) {
+        printf( "\nEl número de hebras debe ser mayor a 0\n" );
+        return false;
+    }
+
+    /* Asigna ruta de instancias y resultados -  Ruta donde se encuentras las instancias a resolver
+       ruta_resultados += "salida/";
+       ruta_resultados += nom_arch;
+       ruta_resultados += "_H";
+       ruta_resultados += static_cast<ostringstream*>( &(ostringstream() << nThread) )->str();
+       ruta_resultados += "_";
+       ruta_resultados += date;
+       ruta_resultados += "/";
+
+
+     */
+
+    /* se crea las ruta los resultados y se copia el script para graficar
+       sprintf(date, "mkdir %s", ruta_resultados.c_str());
+       int n = system(date);
+       sprintf(date, "cp graficar.plt %s", ruta_resultados.c_str());
+       n = system(date);
+       return n+1;
+     */
+
+    /* Ruta donde se encuentran las instancias  */
+    ruta_instancias2 += "instancias/";
+    ruta_instancias2 += nom_arch;
+    return true;
+}
+
+/**
+ * Funcion que carga solo los nombres de las instancias y su numero cromatico (en
+ * caso de existir)
+ *
+ */
+void cargarNombresInstancias( const char ruta[] )
+{
+
+    const int SIZE = 255;
+
+    //Variable que contendra cada linea del archivo leido
+    char linea[SIZE + 1] = "";
+
+    //Variables para formar tokens
+    char separador[] = ",";
+    char *ptr;
+
+    //Variables que contendran los valores que interesan del archivo
+    string nombreInstancia;
+    double optimo = 0.0;
+
+    ifstream in( ruta );
+
+    //Si el archivo no existe
+    if ( !in.good( ) ) {
+        cout << "Error al cargar el archivo (grupo de instancias)[" << ruta << "]..." << endl;
+        exit( 1 );
+    }
+
+    //Proceso las lineas siguientes
+    while ( !in.eof( ) ) {
+        in.getline( linea, SIZE );
+
+        if ( linea[0] != '#' && strlen( linea ) > 1 ) {
+            string cadena( linea );
+            size_t loc = cadena.find( separador );
+
+            if ( loc != string::npos ) {
+                ptr = strtok( linea, separador );
+                nombreInstancia = ptr;
+                ptr = strtok( NULL, separador );
+                optimo = atof( ptr );
+            } else {
+                nombreInstancia = cadena;
+                optimo = 0.0;
+            }
+            pair<string, double> instancia( nombreInstancia, optimo );
+            nombresInstancias.push_back( instancia );
+        }
+    }
+    in.close( );
+}
+
+//Ejecutar cada instancia del archivo 10 veces y guardar en cada una en una carpeta
+// int main(int argc, char *argv[])
+// {
+//   if(argc < 2)
+//     usage();
+
+//   if(!consistenciaArchivo((char*) argv[1]))
+//     exit(0);
+
+
+//   cargarNombresInstancias(ruta_instancias2.c_str());
+//   cout << "Comienza DTP-AGP" << endl;
+
+
+//   for(int i = 0; i < nombresInstancias.size(); i++)
+//     {
+//       for(int j = 0; j < 10; j++)
+// 	{
+// 	  string ruta_instancias;
+// 	  string ruta_resultados;
+// 	  time_t tiempo;
+// 	  struct tm *tlocal;
+// 	  char date[128];
+
+// 	  /* fecha para la carpeta de salida */
+// 	  tiempo = time(0);
+// 	  tlocal = localtime(&tiempo);
+// 	  strftime(date, 128, "%d_%m_%y_%H_%M_%S", tlocal);
+// 	  /* Asigna ruta de instancias y resultados */
+
+// 	  string instancia;
+// 	  size_t loc = nombresInstancias[i].first.rfind("/");
+
+// 	  if(loc != string::npos)
+// 	    {
+// 	      loc++;
+// 	      instancia = nombresInstancias[i].first.substr(loc);
+// 	    }
+// 	  else
+// 	    instancia = nombresInstancias[i].first;
+
+// 	  /* Ruta donde se encuentras las instancias a resolver */
+// 	  ruta_resultados += "salida/";
+// 	  ruta_resultados += instancia;
+// 	  ruta_resultados += "_H";
+// 	  ruta_resultados += static_cast<ostringstream*>( &(ostringstream() << j) )->str();
+// 	  ruta_resultados += "_";
+// 	  ruta_resultados += date;
+// 	  ruta_resultados += "/";
+
+// 	  /* Ruta donde se encuentran las instancias */
+// 	  ruta_instancias += "instancias/";
+// 	  ruta_instancias += nom_arch;
+
+
+// 	  /* se crea las ruta los resultados y se copia el script para graficar */
+// 	  sprintf(date, "mkdir %s", ruta_resultados.c_str());
+// 	  int n = system(date);
+// 	  sprintf(date, "cp graficar.plt %s", ruta_resultados.c_str());
+// 	  n = system(date);
+
+// 	  cout << "Comienza la Evolución" << endl;
+// 	  AGenetic *ag = new AGenetic(popsize, pcross, pmutation, randomseed, ruta_instancias,
+// 				      nombresInstancias[i].first, nombresInstancias[i].second,
+// 				      ruta_resultados, nThread);
+// 	  vector <unsigned> best = ag->evolution(maxgen);
+// 	  cout << "Termina la Evolución" << endl;
+// 	  delete ag;
+// 	}
+//     }
+//   return 0;
+// }
+
+
+//Ejecutar cada instancia del archivo 10 veces y guardar en cada una en una carpeta
+
+int main( int argc, char *argv[] )
+{
+    if ( argc < 2 )
+        usage( );
+
+    if ( !consistenciaArchivo( ( char* ) argv[1] ) )
+        exit( 0 );
+
+    cargarNombresInstancias( ruta_instancias2.c_str( ) );
+    cout << "Comienza AG-GCTSP" << endl;
+    string ruta_resultados;
+    time_t tiempo;
+    struct tm *tlocal;
+    char date[128];
+
+    /* fecha para la carpeta de salida */
+    tiempo = time( 0 );
+    tlocal = localtime( &tiempo );
+    strftime( date, 128, "%d_%m_%y_%H_%M_%S", tlocal );
+    /* Asigna ruta de instancias y resultados */
+    /* Ruta donde se encuentras las instancias a resolver */
+    ruta_resultados += "salida/";
+    ruta_resultados += nom_arch;
+    ruta_resultados += "_";
+    ruta_resultados += date;
+    ruta_resultados += "/";
+
+
+    /* se crea las ruta los resultados y se copia el script para graficar */
+    sprintf( date, "mkdir %s", ruta_resultados.c_str( ) );
+    int n = system( date );
+    sprintf( date, "cp graficar.plt %s", ruta_resultados.c_str( ) );
+
+    float promedioCosto, promedioError, promedioTime, promedioFound;
+    float promedioCosto2, promedioError2, promedioTime2, promedioFound2;
+    float promedioCosto3, promedioError3, promedioTime3, promedioFound3;
+    float costo, error, time, found;
+    float minCosto, minError, minTime, minFound;
+    int N = 10;
+    int M = nombresInstancias.size( );
+    promedioCosto2 = promedioError2 = promedioTime2 = promedioFound2 = promedioCosto3 =
+            promedioError3 = promedioTime3 = promedioFound3 = 0;
+
+    string salida( ruta_resultados + nom_arch + "_" + "estadistica.csv" );
+
+    ofstream out( salida.c_str( ) );
+    // out.close();
+    int contarAlmenosUnHit = 0;
+    int contarCoCoCOCOmboBreakerHit = 0;
+    int nHit = 0;
+    if(!strcmp(argv[2], "GA"))
+      {
+        for ( int i = 0; i < M; i++ ) {
+          string instancia;
+          size_t loc = nombresInstancias[i].first.rfind( "/" );
+
+          if ( loc != string::npos ) {
+            loc++;
+            instancia = nombresInstancias[i].first.substr( loc );
+          } else
+            instancia = nombresInstancias[i].first;
+
+          // out.open(salida.c_str(), ios::app);
+          out << instancia << "\t" << nombresInstancias[i].second << endl;
+          out << "Num\tCost\tError(%)\tTime(seg)\tFound" << endl;
+          // out.close();
+
+          minCosto = minError = minTime = minFound = 99999999999.9;
+          promedioCosto = promedioError = promedioTime = promedioFound = 0;
+          int contarHit = 0;
+          // #pragma omp parallel for num_threads(nThread) ordered schedule(dynamic, 1) reduction(+:promedioCosto, promedioError, promedioTime, promedioFound) reduction(min:minCosto, minError, minTime, minFound) private(randomseed, costo, error, time, found)
+          for ( int j = 0; j < N; j++ ) {
+            AGenetic *ag = new AGenetic( popsize, pcross, pmutation, randomseed,
+                                         nombresInstancias[i].first, nombresInstancias[i].second,
+                                         ruta_resultados, nThread, j + 1 );
+            ag->evolution( maxgen );
+
+            randomseed = ag->rnd( 0, 99999999 );
+            costo = ag->bestfit.ruta;
+            error = ag->bestfit.fitness * 100;
+            time = ag->tiempo;
+            found = ag->bestfit.parent[0];
+            delete ag;
+            // cout << costo << " " << error << " " << time << " " << found << endl;
+            promedioCosto += costo;
+            promedioError += error;
+            promedioTime += time;
+            promedioFound += found;
+
+            if ( minCosto > costo )
+              minCosto = costo;
+            if ( minError > error )
+              minError = error;
+            if ( minTime > time )
+              minTime = time;
+            if ( minFound > found )
+              minFound = found;
+            if ( error == 0.0 )
+              contarHit++;
+            // #pragma omp ordered
+            //           {
+            // out.open(salida.c_str(), ios::app);
+            out << j + 1 << "\t" << costo << "\t" << error << "\t" << time << "\t" << found << endl;
+            // out.close();
+            // }
+
+          }
+          // out.close();
+          // cout << promedioCosto << " " << promedioError << " " << promedioTime << " " << promedioFound << endl;
+          promedioCosto = promedioCosto / N;
+          promedioError = promedioError / N;
+          promedioTime = promedioTime / N;
+          promedioFound = promedioFound / N;
+
+          // out.open(salida.c_str(), ios::app);
+          out << "AVG\t" << promedioCosto << "\t" << promedioError
+              << "\t" << promedioTime << "\t" << promedioFound << endl;
+          out << "MIN\t" << minCosto << "\t" << minError << "\t" << minTime << "\t" << minFound  << endl;
+          out << "HIT\t" <<  contarHit << "\t" << ((float) contarHit / N) * 100 << endl << endl;
+          // Contar Hits
+          nHit += contarHit;
+          if(contarHit > 0)
+            contarAlmenosUnHit++;
+          if(contarHit == N)
+            contarCoCoCOCOmboBreakerHit++;
+          // out.close();
+          promedioCosto2 += promedioCosto;
+          promedioError2 += promedioError;
+          promedioTime2 += promedioTime;
+          promedioFound2 += promedioFound;
+
+          promedioCosto3 += minCosto;
+          promedioError3 += minError;
+          promedioTime3 += minTime;
+          promedioFound3 += minFound;
+
+        }
+        // out.open(salida.c_str(), ios::app);
+        out << endl;
+        out << "Grupo " << nom_arch << " Estadística (Promedios)" << endl;
+        out << "AVG del AVG\t" << promedioCosto2 / M << "\t" << promedioError2 / M
+            << "\t" << promedioTime2 / M << "\t" << promedioFound2 / M << endl;
+        out << "AVG BEST\t" << promedioCosto3 / M << "\t" << promedioError3 / M
+            << "\t" << promedioTime3 / M << "\t" << promedioFound3 / M << endl;
+        out << "TOTAL HIT\t" << contarCoCoCOCOmboBreakerHit << "\t" << ((float) contarCoCoCOCOmboBreakerHit / M)* 100 << endl;
+        out << "BEST HIT\t" << contarAlmenosUnHit << "\t" <<  ((float) contarAlmenosUnHit / M) * 100 << endl;
+        out << "DETAILS HIT\t" << nHit << "\t" <<  ((float) nHit / (M*N)) * 100 << endl;
+        out.close( );
+      }
+    else
+      {
+        popsize = 2;
+        maxgen = 5000;
+        for ( int i = 0; i < M; i++ ) {
+          string instancia;
+          size_t loc = nombresInstancias[i].first.rfind( "/" );
+
+          if ( loc != string::npos ) {
+            loc++;
+            instancia = nombresInstancias[i].first.substr( loc );
+          } else
+            instancia = nombresInstancias[i].first;
+
+          // out.open(salida.c_str(), ios::app);
+          out << instancia << "\t" << nombresInstancias[i].second << endl;
+          out << "Num\tCost\tError(%)\tTime(seg)\tFound" << endl;
+          // out.close();
+
+          minCosto = minError = minTime = minFound = 99999999999.9;
+          promedioCosto = promedioError = promedioTime = promedioFound = 0;
+          int contarHit = 0;
+          // #pragma omp parallel for num_threads(nThread) ordered schedule(dynamic, 1) reduction(+:promedioCosto, promedioError, promedioTime, promedioFound) reduction(min:minCosto, minError, minTime, minFound) private(randomseed, costo, error, time, found)
+          for ( int j = 0; j < N; j++ ) {
+            AGenetic *ag = new AGenetic( popsize, pcross, pmutation, randomseed,
+                                         nombresInstancias[i].first, nombresInstancias[i].second,
+                                         ruta_resultados, nThread, j + 1 );
+            ag->ILS( maxgen );
+
+            randomseed = ag->rnd( 0, 99999999 );
+            costo = ag->bestfit.ruta;
+            error = ag->bestfit.fitness * 100;
+            time = ag->tiempo;
+            found = ag->bestfit.parent[0];
+            delete ag;
+            // cout << costo << " " << error << " " << time << " " << found << endl;
+            promedioCosto += costo;
+            promedioError += error;
+            promedioTime += time;
+            promedioFound += found;
+
+            if ( minCosto > costo )
+              minCosto = costo;
+            if ( minError > error )
+              minError = error;
+            if ( minTime > time )
+              minTime = time;
+            if ( minFound > found )
+              minFound = found;
+            if ( error == 0.0 )
+              contarHit++;
+            // #pragma omp ordered
+            //           {
+            // out.open(salida.c_str(), ios::app);
+            out << j + 1 << "\t" << costo << "\t" << error << "\t" << time << "\t" << found << endl;
+            // out.close();
+            // }
+
+          }
+          // out.close();
+          // cout << promedioCosto << " " << promedioError << " " << promedioTime << " " << promedioFound << endl;
+          promedioCosto = promedioCosto / N;
+          promedioError = promedioError / N;
+          promedioTime = promedioTime / N;
+          promedioFound = promedioFound / N;
+
+          // out.open(salida.c_str(), ios::app);
+          out << "AVG\t" << promedioCosto << "\t" << promedioError
+              << "\t" << promedioTime << "\t" << promedioFound << endl;
+          out << "MIN\t" << minCosto << "\t" << minError << "\t" << minTime << "\t" << minFound  << endl;
+          out << "HIT\t" <<  contarHit << "\t" << ((float) contarHit / N) * 100 << endl << endl;
+          // Contar Hits
+          nHit += contarHit;
+          if(contarHit > 0)
+            contarAlmenosUnHit++;
+          if(contarHit == N)
+            contarCoCoCOCOmboBreakerHit++;
+          // out.close();
+          promedioCosto2 += promedioCosto;
+          promedioError2 += promedioError;
+          promedioTime2 += promedioTime;
+          promedioFound2 += promedioFound;
+
+          promedioCosto3 += minCosto;
+          promedioError3 += minError;
+          promedioTime3 += minTime;
+          promedioFound3 += minFound;
+
+        }
+        // out.open(salida.c_str(), ios::app);
+        out << endl;
+        out << "Grupo " << nom_arch << " Estadística (Promedios)" << endl;
+        out << "AVG del AVG\t" << promedioCosto2 / M << "\t" << promedioError2 / M
+            << "\t" << promedioTime2 / M << "\t" << promedioFound2 / M << endl;
+        out << "AVG BEST\t" << promedioCosto3 / M << "\t" << promedioError3 / M
+            << "\t" << promedioTime3 / M << "\t" << promedioFound3 / M << endl;
+        out << "TOTAL HIT\t" << contarCoCoCOCOmboBreakerHit << "\t" << ((float) contarCoCoCOCOmboBreakerHit / M)* 100 << endl;
+        out << "BEST HIT\t" << contarAlmenosUnHit << "\t" <<  ((float) contarAlmenosUnHit / M) * 100 << endl;
+        out << "DETAILS HIT\t" << nHit << "\t" <<  ((float) nHit / (M*N)) * 100 << endl;
+        out.close( );
+      }
+
+    return 0;
+}
+
+// int main(int argc, char *argv[])
+// {
+//   if(argc < 2)
+//     usage();
+
+//   if(!consistenciaArchivo((char*) argv[1]))
+//     exit(0);
+
+//   cargarNombresInstancias(ruta_instancias2.c_str());
+//   cout << "Comienza AG-GCTSP" << endl;
+//   string ruta_resultados;
+//   time_t tiempo;
+//   struct tm *tlocal;
+//   char date[128];
+
+//   /* fecha para la carpeta de salida */
+//   tiempo = time(0);
+//   tlocal = localtime(&tiempo);
+//   strftime(date, 128, "%d_%m_%y_%H_%M_%S", tlocal);
+//   /* Asigna ruta de instancias y resultados */
+//   /* Ruta donde se encuentras las instancias a resolver */
+//   ruta_resultados += "salida/";
+//   ruta_resultados += nom_arch;
+//   ruta_resultados += "_";
+//   ruta_resultados += date;
+//   ruta_resultados += "/";
+
+
+//   /* se crea las ruta los resultados y se copia el script para graficar */
+//   sprintf(date, "mkdir %s", ruta_resultados.c_str());
+//   int n = system(date);
+//   sprintf(date, "cp graficar.plt %s", ruta_resultados.c_str());
+
+//   float promedioCosto, promedioError, promedioTime, promedioFound;
+//   float promedioCosto2, promedioError2, promedioTime2, promedioFound2;
+//   float promedioCosto3, promedioError3, promedioTime3, promedioFound3;
+//   float costo, error, time, found;
+//   float minCosto, minError, minTime, minFound;
+//   int N = 10;
+//   int M = nombresInstancias.size();
+//   promedioCosto2 = promedioError2 = promedioTime2 = promedioFound2 =  promedioCosto3 =
+//     promedioError3 = promedioTime3 = promedioFound3 = 0;
+
+//   string salida(ruta_resultados + nom_arch + "_" + "estadistica.csv");
+
+//   ofstream out(salida.c_str());
+//   out.close();
+//   for(int i = 0; i < M; i++)
+//     {
+
+//       string instancia;
+//       size_t loc = nombresInstancias[i].first.rfind("/");
+
+//       if(loc != string::npos)
+//         {
+//           loc++;
+//           instancia = nombresInstancias[i].first.substr(loc);
+//         }
+//       else
+//         instancia = nombresInstancias[i].first;
+
+//       out.open(salida.c_str(), ios::app);
+//       out << instancia << "\t" << nombresInstancias[i].second << endl;
+//       out << "Num\tCost\tError(%)\tTime(seg)\tFound" << endl;
+//       out.close();
+
+//       minCosto = minError = minTime = minFound = 99999999999.9;
+//       promedioCosto = promedioError = promedioTime = promedioFound = 0;
+//       AGenetic **ag = new AGenetic*[nThread];
+// #pragma omp parallel for num_threads(nThread) ordered schedule(dynamic, 1) reduction(+:promedioCosto, promedioError, promedioTime, promedioFound) reduction(min:minCosto, minError, minTime, minFound) private(randomseed, costo, error, time, found)
+//       for(int j = 0; j < N; j++)
+//         {
+//           ag[j] = new AGenetic(popsize, pcross, pmutation, randomseed,
+//                                nombresInstancias[i].first, nombresInstancias[i].second,
+//                                ruta_resultados, nThread, j + 1);
+//           // vector <unsigned> best =
+//           ag[j]->evolution(maxgen);
+
+//           randomseed = ag[j]->rnd(0, 99999999);
+//           costo = ag[j]->bestfit.ruta;
+//           error = ag[j]->bestfit.errorRelativo * 100;
+//           time = ag[j]->tiempo;
+//           found = ag[j]->bestfit.parent[0];
+//           delete ag[j];
+//           // cout << costo << " " << error << " " << time << " " << found << endl;
+//           promedioCosto += costo;
+//           promedioError += error;
+//           promedioTime += time;
+//           promedioFound += found;
+
+//           if(minCosto > costo)
+//             minCosto = costo;
+//           if(minError > error)
+//             minError = error;
+//           if(minTime > time)
+//             minTime = time;
+//           if(minFound > found)
+//             minFound = found;
+// #pragma omp ordered
+//           {
+//             out.open(salida.c_str(), ios::app);
+//             out << j+1 << "\t" << costo << "\t" << error << "\t" << time  << "\t" << found << endl;
+//             out.close();
+//           }
+
+//         }
+
+//       // cout << promedioCosto << " " << promedioError << " " << promedioTime << " " << promedioFound << endl;
+//       promedioCosto = promedioCosto / N;
+//       promedioError = promedioError / N;
+//       promedioTime = promedioTime / N;
+//       promedioFound = promedioFound / N;
+
+//       out.open(salida.c_str(), ios::app);
+//       out << "AVG\t" << promedioCosto << "\t" << promedioError
+//           << "\t" << promedioTime << "\t" << promedioFound << endl;
+//       out << "MIN\t" << minCosto << "\t" << minError << "\t" << minTime << "\t" << minFound << endl << endl;
+//       out.close();
+//       promedioCosto2 += promedioCosto;
+//       promedioError2 += promedioError;
+//       promedioTime2 += promedioTime;
+//       promedioFound2 += promedioFound;
+
+//       promedioCosto3 += minCosto;
+//       promedioError3 += minError;
+//       promedioTime3 += minTime;
+//       promedioFound3 += minFound;
+
+//     }
+//   out.open(salida.c_str(), ios::app);
+//   out << endl;
+//   out << "Grupo " << nom_arch << " Estadística (Promedios)" << endl;
+//   out << "AVG del AVG\t" << promedioCosto2/M << "\t" << promedioError2/M
+//       << "\t" << promedioTime2/M << "\t" << promedioFound2/M << endl;
+//   out << "AVG BEST\t" << promedioCosto3/M << "\t" << promedioError3/M
+//       << "\t" << promedioTime3/M << "\t" << promedioFound3/M << endl;
+//   out.close();
+//   return 0;
+// }

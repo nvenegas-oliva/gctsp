@@ -1,0 +1,288 @@
+/* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4; -*- */
+/*
+ * tsp.cpp
+ * This file is part of VCP-PGB
+ *
+ * Copyright (C) 2012 - Carlos Contreras Bolton <ccontreras.bolton@gmail.com>
+ *
+ * VCP-PGB is free software; you can redistribute it and/or modify it under
+ * the terms of the GNU Lesser General Public License as published by the
+ * Free Software Foundation; either version 2.1 of the License, or (at your
+ * option) any later version.
+ *
+ * VCP-PGB is distributed in the hope that it will be useful, but WITHOUT ANY
+ * WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS
+ * FOR A PARTICULAR PURPOSE.  See the GNU Lesser General Public License for
+ * more details.
+ *
+ * You should have received a copy of the GNU Lesser General Public License
+ * along with VCP-PGB; if not, write to the Free Software Foundation, Inc.,
+ * 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
+ */
+
+#include "tsp.hpp"
+
+#include <iostream>
+#include <fstream>
+#include <vector>
+#include <map>
+#include <algorithm>
+#include <stdio.h>
+#include <stdlib.h>
+#include <stack>
+#include "math.h"
+#include "node.h"
+#include "auxiliares.hpp"
+
+TSP::TSP( string ruta_instancia, string ruta_resultados )
+{
+    this->ruta_instancia = ruta_instancia;
+    this->ruta_resultados = ruta_resultados;
+
+}
+
+TSP::TSP( int Numciudades )
+{
+    this->Numciudades = Numciudades;
+}
+
+/**
+ *
+ * Destructor de la clase AGenetic
+ *
+ **/
+TSP::~TSP( )
+{
+    delete [] pt;
+}
+
+/**
+ * Funcion que lee los datos de una instancia y los pasa a las variables.
+ *
+ **/
+void TSP::leerInstancia( vector <vector <float> > p, int np )
+{
+    pt = new ruta[np + 1];
+    for ( int i = 0; i < np + 1; i++ ) {
+        // cout << p[i][0] << " " << p[i][1] << endl;
+        pt[i].NombreCiudad = i;
+        pt[i].x = p[i][0];
+        pt[i].y = p[i][1];
+    }
+    // exit(0);
+}
+
+float TSP::calculaDistancia( float x1, float y1, float x2, float y2 )
+{
+    float dx, dy;
+    dx = pow( x2 - x1, 2 );
+    dy = pow( y2 - y1, 2 );
+    return sqrt( dx + dy );
+}
+
+float TSP::distancia2Ciudades( int i, int j )
+{
+    float distancia = calculaDistancia( pt[i].x, pt[i].y,
+                                        pt[j].x, pt[j].y );
+    return distancia;
+}
+
+float TSP::evaluar( vector <unsigned> chrm )
+{
+    float distancia = 0;
+    int nCity = chrm.size();
+    //distancia = distancia + distancia2Ciudades( 0, chrm[0] );
+
+    for ( int i = 1; i < nCity; i++ ) {
+        distancia = distancia + distancia2Ciudades( chrm[i - 1], chrm[i] );
+    }
+
+    distancia = distancia + distancia2Ciudades( chrm[nCity - 1], 0 );
+
+    return distancia;
+}
+
+
+float TSP::evaluar( vector <unsigned> chrm, int nCity)
+{
+    float distancia = distancia2Ciudades( 0, chrm[0]);
+    //distancia = distancia + distancia2Ciudades( 0, chrm[0] );
+
+    // cout << "evaluo: " << endl;
+    // cout << 0 << " "<< chrm[0] << " ";
+    // cout << endl;
+    // cout << "\td(" << 0 << ", " << chrm[0] << ") = " << distancia << endl;
+    for ( int i = 1; i < nCity; i++ ) {
+        distancia = distancia + distancia2Ciudades( chrm[i - 1], chrm[i] );
+        // cout << "\td(" << chrm[i - 1] << ", " << chrm[i] << ") = " << distancia2Ciudades( chrm[i - 1], chrm[i] ) << endl;
+    }
+    distancia = distancia + distancia2Ciudades( chrm[nCity - 1], 0 );
+    // cout << "\td(" << chrm[nCity - 1] << ", " << 0 << ") = " << distancia2Ciudades( chrm[nCity - 1], 0 ) << endl;
+    return distancia;
+}
+
+/**
+ * Función que genera un vector con la ruta a partir del 30 % de las
+ * ciudadades más cercanas al depot, luego construye la ruta
+ * restante con las ciudades más cercanas
+ *
+ * @param inicio: número aleatorio, para escoger la ciudad inicial.
+ * @param ruta: cromosoma, está vacio de momento
+ *
+ */
+void TSP::vecinoMasCercano( int inicio, vector <unsigned> &cromosoma)
+{
+    vector <bool> marca( Numciudades + 1, 0 ); // Contando el depot
+    // vector <unsigned> ruta;
+    float costoMin, costoActual = 0;
+    int ciudadInicio, ciudadFinal, j;
+    int ciudadInicio_candidata, ciudadFinal_candidata;
+    // crear vector de ciudadades con las distancias respecto al depot
+    vector <pair <int, float> > nearestDepot;
+    for ( int i = 1; i <= Numciudades; i++ )
+        {
+            pair <int, float> city( i, distancia2Ciudades( 0, i ) );
+            nearestDepot.push_back( city );
+        }
+    // Ordenar por los más cercano al depot
+    sort( nearestDepot.begin( ), nearestDepot.end( ), compare_pair_second<std::less>( ) );
+    // Partir de está ciudad
+    ciudadFinal = nearestDepot[inicio].first;
+
+    list<unsigned> ruta;
+    ruta.push_back( ciudadFinal );
+    marca[0] = 1; // Marcar el depot
+    marca[ciudadFinal] = 1; // Marca la ciudad aleatoria
+    ciudadInicio = ciudadFinal_candidata = ciudadInicio_candidata = ciudadFinal;
+    bool end = true; // insertar ciudad al final si es true, al inicio si es false
+    bool end_candidato = true; // insertar ciudad al final si es true, al inicio si es false
+    // Construir el cromosoma con la heurística del vecino más cercano
+    while ( ruta.size( ) < Numciudades )  {
+        // Escoger la ciudad más cercana a la ciudad anterior
+        for ( j = 1, costoMin = 99999999; j <= Numciudades; j++ )  { // 1 ... n
+            if ( marca[j] == 0 && j != ciudadInicio && j != ciudadFinal ) {
+                float costEnd = distancia2Ciudades( ciudadFinal, j );
+                float costBegin = distancia2Ciudades( ciudadInicio, j );
+
+                if(costEnd < costBegin) {
+                    costoActual = costEnd;
+                    end = true;
+                } else {
+                    costoActual = costBegin;
+                    end = false;
+                }
+
+                // Se encuentra un más cercana
+                if ( costoActual < costoMin ) {
+                    costoMin = costoActual;
+                    if(end) {
+                        ciudadFinal_candidata = j;
+                        end_candidato = true;
+                    } else {
+                        ciudadInicio_candidata = j;
+                        end_candidato = false;
+                    }
+                }
+            }
+        }
+        if(end_candidato) {
+            ruta.push_back( ciudadFinal_candidata ); // es la ciudad más cercana a la anterior
+            marca[ciudadFinal_candidata] = 1; // Se marca
+            ciudadFinal = ciudadFinal_candidata;
+        } else {
+            ruta.push_front( ciudadInicio_candidata ); // es la ciudad más cercana a la anterior
+            marca[ciudadInicio_candidata] = 1; // Se marca
+            ciudadInicio = ciudadInicio_candidata;
+        }
+    }
+
+    for (list<unsigned>::iterator it = ruta.begin(); it != ruta.end(); ++it)
+        cromosoma.push_back(*it);
+}
+
+float TSP::getOptimo( )
+{
+    return optimoSolucion;
+}
+
+
+//Necesaria para ordenar el mapa
+bool comp( const pair < int, float > &a, const pair < int, float > &b )
+{
+    return a.second > b.second;
+}
+
+/**
+ * Función que genera un vector con la ruta del vecino más cercano
+ * al rededor del depot, de manera aleatoria. La ruta satisface el P.
+ *
+ * @param ruta: cromosoma, está vacio de momento
+ * @param associations: mapa con los customers por supliers
+ * @param n_rand: número aleatorio.
+ *
+ */
+
+void TSP::vecinoCercanoAlDepot(vector <unsigned> &ruta,  map < int, set <int> > &associations , int n_rand )
+{
+    //mapa <ciudad, distancia al cero>
+    vector < pair < int, float > > v_distancias;
+    set< int > covers; //Clientes cubiertos
+    vector < unsigned > cercanos;
+
+    //Ordenar por lo más cercanos al depot.
+    for( map < int, set <int> >::iterator it = associations.begin( );
+         it != associations.end( ) ;
+         it++ )
+        {
+            v_distancias.push_back( make_pair( it->first, distancia2Ciudades( it->first , 0 ) ) );
+        }
+
+    //Se ordena el mapa por los que tengan más clientes asociados.
+    sort( v_distancias.begin( ) , v_distancias.end( ) , comp );
+
+    int i = 0, abarcados = 0; //clientes abarcados.
+
+    while( abarcados < P ) //Sumar customers hasta que se supere o iguale la cantidad de clientes.
+        {
+            cercanos.push_back( v_distancias[i].first ); //Se agrega el customer
+            agregar_customers_alConjunto( &covers, &associations, v_distancias[i].first );
+            abarcados = covers.size( );
+            i++;
+        }
+
+    //Se elige a un customer al azar.
+    int pos = n_rand % ( cercanos.size( ) - 1 );
+
+    int inicio = cercanos[ pos ]; // Se escoge una ciudad al azar
+
+    ruta.push_back( inicio ); //Se inserta en la ruta el inicio.
+    cercanos.erase( cercanos.begin( ) + pos , cercanos.begin( ) + pos + 1 );
+
+    int largoInicial = cercanos.size( );
+
+    // Se recorren los vecinos hasta encontrar lo más cercanos
+    for( i = 0 ; i < largoInicial ; i++ )
+        {
+            float menorRutaTemp = 999999999;
+            int cambiarPor = -1;
+            for(int j = 0 ; j < cercanos.size( ) ; j++ )
+                {
+                    float costoActual = distancia2Ciudades( ruta.at( i ), cercanos.at(j) );
+                    if( costoActual  < menorRutaTemp )
+                        {
+                            cambiarPor = j;
+                            menorRutaTemp = costoActual;
+                        }
+                }
+            if(cambiarPor != -1)
+                {
+                    //Añadir el customer más cercano al anterior a la ruta
+                    ruta.push_back( cercanos.at(cambiarPor) );
+                    //Se debe quitar del conjunto de cercanos ya que la agrego a la ruta
+                    cercanos.erase( cercanos.begin( ) + cambiarPor , cercanos.begin( ) + cambiarPor + 1 );
+                }
+        }
+    // completar la ruta
+    for( i = largoInicial+1 ; i < Numciudades ; i++ )
+        ruta.push_back(v_distancias[i].first);
+}
